@@ -54,6 +54,7 @@ from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from facechain.inference import data_process_fn
+from env import model_path
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.14.0.dev0")
@@ -539,8 +540,8 @@ def main():
             ).repo_id
 
     ## Download foundation Model
-    user_agent = {'invoked_by': 'trainer', 'third_party':'facechain'}
-    model_dir = snapshot_download(args.pretrained_model_name_or_path, revision=args.revision, user_agent=user_agent)
+    #user_agent = {'invoked_by': 'trainer', 'third_party':'facechain'}
+    model_dir = model_path + args.pretrained_model_name_or_path
 
     if args.sub_path is not None and len(args.sub_path) > 0:
         model_dir = os.path.join(model_dir, args.sub_path)

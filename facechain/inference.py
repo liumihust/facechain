@@ -15,6 +15,8 @@ from modelscope import snapshot_download
 from facechain.merge_lora import merge_lora
 from facechain.data_process.preprocessing import Blipv2
 
+from env import model_path
+
 
 def data_process_fn(input_img_dir, use_data_process):
     ## TODO add face quality filter
@@ -27,10 +29,10 @@ def data_process_fn(input_img_dir, use_data_process):
         return os.path.join(str(input_img_dir) + '_labeled', "metadata.jsonl")
 
 
-def txt2img(pipe, pos_prompt, neg_prompt, num_images=10):
+def txt2img(pipe, pos_prompt, neg_prompt, height=512, width=512, num_images=10):
     images_out = []
     for i in range(int(num_images / 5)):
-        images_style = pipe(prompt=pos_prompt, height=512, width=512, guidance_scale=7, negative_prompt=neg_prompt,
+        images_style = pipe(prompt=pos_prompt, height=height, width=width, guidance_scale=7, negative_prompt=neg_prompt,
                             num_inference_steps=40, num_images_per_prompt=5).images
         images_out.extend(images_style)
     return images_out
@@ -39,7 +41,8 @@ def txt2img(pipe, pos_prompt, neg_prompt, num_images=10):
 def main_diffusion_inference(pos_prompt, neg_prompt,
                              input_img_dir, base_model_path, style_model_path, lora_model_path,
                              multiplier_style=0.25,
-                             multiplier_human=1.0):
+                             multiplier_human=1.0,
+                             height=512, width=512):
     if style_model_path is None:
         model_dir = snapshot_download('Cherrytest/zjz_mj_jiyi_small_addtxt_fromleo', revision='v1.0.0')
         style_model_path = os.path.join(model_dir, 'zjz_mj_jiyi_small_addtxt_fromleo.safetensors')
@@ -96,7 +99,7 @@ def main_diffusion_inference(pos_prompt, neg_prompt,
     # pos_prompt = 'Generate a standard ID photo of a chinese {}, solo, wearing high-class business/working suit, beautiful smooth face, with high-class/simple pure color background, looking straight into the camera with shoulders parallel to the frame, smile, high detail face, best quality, photorealistic'.format(gender)
     pipe = pipe.to("cuda")
     # print(trigger_style + add_prompt_style + pos_prompt)
-    images_style = txt2img(pipe, trigger_style + add_prompt_style + pos_prompt, neg_prompt, num_images=10)
+    images_style = txt2img(pipe, trigger_style + add_prompt_style + pos_prompt, neg_prompt, height, width, num_images=10)
     return images_style
 
 
@@ -109,11 +112,11 @@ def stylization_fn(use_stylization, rank_results):
 
 
 def main_model_inference(pos_prompt, neg_prompt, style_model_path, multiplier_style, use_main_model,
-                         input_img_dir=None, base_model_path=None, lora_model_path=None):
+                         input_img_dir=None, base_model_path=None, lora_model_path=None,height=512, width=512):
     if use_main_model:
         multiplier_style_kwargs = {'multiplier_style': multiplier_style} if multiplier_style is not None else {}
         return main_diffusion_inference(pos_prompt, neg_prompt, input_img_dir, base_model_path, style_model_path, lora_model_path,
-                                        **multiplier_style_kwargs)
+                                        **multiplier_style_kwargs, height=height, width=width)
 
 
 def select_high_quality_face(input_img_dir):
@@ -205,8 +208,8 @@ class GenPortrait:
         self.neg_prompt = neg_prompt
 
     def __call__(self, input_img_dir, num_gen_images=6, base_model_path=None,
-                 lora_model_path=None, sub_path=None, revision=None):
-        base_model_path = snapshot_download(base_model_path, revision=revision)
+                 lora_model_path=None, sub_path=None, revision=None,height=512, width=512):
+        base_model_path = model_path + base_model_path
         if sub_path is not None and len(sub_path) > 0:
             base_model_path = os.path.join(base_model_path, sub_path)
 
@@ -214,7 +217,8 @@ class GenPortrait:
         gen_results = main_model_inference(self.pos_prompt, self.neg_prompt,
                                            self.style_model_path, self.multiplier_style,
                                            self.use_main_model, input_img_dir=input_img_dir,
-                                           lora_model_path=lora_model_path, base_model_path=base_model_path)
+                                           lora_model_path=lora_model_path, base_model_path=base_model_path,
+                                           height=height, width=width)
         # select_high_quality_face PIL
         selected_face = select_high_quality_face(input_img_dir)
         # face_swap cv2

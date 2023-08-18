@@ -11,6 +11,11 @@ import numpy as np
 import torch
 from modelscope import snapshot_download
 
+from env import server_port
+from env import base_model
+from env import revision
+from env import base_model_sub_dir
+
 from facechain.inference import GenPortrait
 from facechain.train_text_to_image_lora import prepare_dataset, data_process_fn
 from facechain.constants import neg_prompt, pos_prompt_with_cloth, pos_prompt_with_style, styles, cloth_prompt
@@ -68,7 +73,7 @@ def concatenate_images(images):
 def train_lora_fn(foundation_model_path=None, revision=None, output_img_dir=None, work_dir=None):
     os.system(
         f'PYTHONPATH=. accelerate launch facechain/train_text_to_image_lora.py --pretrained_model_name_or_path={foundation_model_path} '
-        f'--revision={revision} --sub_path="film/film" '
+        f'--revision={revision} --sub_path={base_model_sub_dir} '
         f'--output_dataset_name={output_img_dir} --caption_column="text" --resolution=512 '
         f'--random_flip --train_batch_size=1 --num_train_epochs=200 --checkpointing_steps=5000 '
         f'--learning_rate=1e-04 --lr_scheduler="cosine" --lr_warmup_steps=0 --seed=42 --output_dir={work_dir} '
@@ -92,9 +97,10 @@ def launch_pipeline(uuid,
                     user_models,
                     num_images=1,
                     style_model=None,
-                    multiplier_style=0.25
+                    multiplier_style=0.25,
+                    height=512,
+                    width=512,
                     ):
-    base_model = 'ly261666/cv_portrait_model'
     before_queue_size = inference_threadpool._work_queue.qsize()
     before_done_count = inference_done_count
     style_model = styles[style_model]['name']
@@ -132,7 +138,8 @@ def launch_pipeline(uuid,
 
     num_images = min(6, num_images)
     future = inference_threadpool.submit(gen_portrait, instance_data_dir,
-                                         num_images, base_model, lora_model_path, 'film/film', 'v2.0')
+                                         num_images, base_model, lora_model_path, base_model_sub_dir, revision,
+                                         height, width)
 
     while not future.done():
         is_processing = future.running()
@@ -197,8 +204,8 @@ class Trainer:
         data_process_fn(instance_data_dir, True)
 
         # train lora
-        train_lora_fn(foundation_model_path='ly261666/cv_portrait_model',
-                      revision='v2.0',
+        train_lora_fn(foundation_model_path=base_model,
+                      revision=revision,
                       output_img_dir=instance_data_dir,
                       work_dir=work_dir)
 
@@ -320,6 +327,26 @@ def inference_input():
                     gr.Markdown('''
                     注意：最多支持生成6张图片!(You may generate a maximum of 6 photos at one time!)
                         ''')
+                with gr.Box():
+                    with gr.Row():
+                        with gr.Column():
+                            num_images = gr.Number(
+                                label='生成图片数量', value=6, precision=1)
+                            gr.Markdown('''
+                            注意：最多支持生成6张图片!
+                            ''')
+                        with gr.Column():
+                            height = gr.Number(
+                                label='照片高度', value=512, precision=1)
+                            gr.Markdown('''
+                            默认为512
+                            ''')
+                        with gr.Column():
+                            width = gr.Number(
+                                label='照片宽度', value=512, precision=1)
+                            gr.Markdown('''
+                            默认为512
+                            ''')
 
         display_button = gr.Button('开始生成(Start!)')
 
@@ -333,7 +360,7 @@ def inference_input():
         style_model.change(update_cloth, style_model, [cloth_style, pos_prompt])
         cloth_style.change(update_prompt, [style_model, cloth_style], [pos_prompt])
         display_button.click(fn=launch_pipeline,
-                             inputs=[uuid, pos_prompt, user_models, num_images, style_model, multiplier_style],
+                             inputs=[uuid, pos_prompt, user_models, num_images, style_model, multiplier_style, height, width],
                              outputs=[infer_progress, output_images])
 
     return demo
@@ -346,5 +373,4 @@ with gr.Blocks(css='style.css') as demo:
         with gr.TabItem('\N{party popper}形象体验(Inference)'):
             inference_input()
 
-demo.queue(status_update_rate=1).launch(share=True)
-
+demo.queue(status_update_rate=1).launch(server_name='0.0.0.0', server_port=server_port, share=True, enable_queue=True)

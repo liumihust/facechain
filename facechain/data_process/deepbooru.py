@@ -13,6 +13,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from modelscope.hub.snapshot_download import snapshot_download
 
+from env import base_model
+from env import revision
+from env import pretrain_model_path
+
 # see https://github.com/AUTOMATIC1111/TorchDeepDanbooru for more
 LANCZOS = (Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS)
 
@@ -717,9 +721,9 @@ class DeepDanbooru:
     def __init__(self):
         self.model = DeepDanbooruModel()
 
-        foundation_model_id = 'ly261666/cv_portrait_model'
-        snapshot_path = snapshot_download(foundation_model_id, revision='v4.0')
-        pretrain_model_path = os.path.join(snapshot_path, 'model-resnet_custom_v3.pt')
+        #foundation_model_id = base_model
+        #snapshot_path = snapshot_download(foundation_model_id, revision=revision)
+        #pretrain_model_path = '/mnt/workspace/.cache/modelscope/' + foundation_model_id + '/model-resnet_custom_v3.pt'
 
         self.model.load_state_dict(torch.load(pretrain_model_path, map_location="cpu"))
         self.model.eval()
