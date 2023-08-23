@@ -322,12 +322,6 @@ def inference_input():
                     multiplier_style = gr.Slider(minimum=0, maximum=1, value=0.25,
                                                  step=0.05, label='风格权重(Multiplier style)')
                 with gr.Box():
-                    num_images = gr.Number(
-                        label='生成图片数量(Number of photos)', value=6, precision=1, minimum=1, maximum=6)
-                    gr.Markdown('''
-                    注意：最多支持生成6张图片!(You may generate a maximum of 6 photos at one time!)
-                        ''')
-                with gr.Box():
                     with gr.Row():
                         with gr.Column():
                             num_images = gr.Number(
