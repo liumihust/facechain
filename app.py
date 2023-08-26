@@ -12,6 +12,11 @@ import torch
 from glob import glob
 from modelscope import snapshot_download
 
+from env import server_port
+from env import base_model
+from env import revision
+from env import base_model_sub_dir
+
 from facechain.inference import GenPortrait
 from facechain.inference_inpaint import GenPortraitInpaint
 from facechain.data_process.preprocessing import get_popular_prompts
@@ -25,6 +30,9 @@ inference_done_count = 0
 HOT_MODELS = [
     "\N{fire}数字身份(Digital Identity)",
 ]
+
+FACE_TAGS = {'default'}
+default_personalizaition_lora_name = "personalizaition_lora"
 
 
 class UploadTarget(enum.Enum):
@@ -106,7 +114,7 @@ def train_lora_fn(foundation_model_path=None, revision=None, output_img_dir=None
     else:
         os.system(
             f'PYTHONPATH=. accelerate launch facechain/train_text_to_image_lora.py --pretrained_model_name_or_path={foundation_model_path} '
-            f'--revision={revision} --sub_path="film/film" '
+            f'--revision={revision} --sub_path={base_model_sub_dir}'
             f'--output_dataset_name={output_img_dir} --caption_column="text" --resolution=512 '
             f'--random_flip --train_batch_size=1 --num_train_epochs=200 --checkpointing_steps=5000 '
             f'--learning_rate=1.5e-04 --lr_scheduler="cosine" --lr_warmup_steps=0 --seed=42 --output_dir={work_dir} '
@@ -132,9 +140,11 @@ def launch_pipeline(uuid,
                     style_model=None,
                     multiplier_style=0.25,
                     pose_model=None,
-                    pose_image=None
+                    pose_image=None,
+                    face_tag = None,
+                    height=512,
+                    width=512
                     ):
-    base_model = 'ly261666/cv_portrait_model'
     before_queue_size = 0
     before_done_count = inference_done_count
     style_model = styles[style_model]['name']
@@ -173,7 +183,10 @@ def launch_pipeline(uuid,
     use_post_process = True
     use_stylization = False
 
-    output_model_name = 'personalization_lora'
+    output_model_name = default_personalizaition_lora_name
+    if face_tag is not None:
+        output_model_name = output_model_name + "_" + face_tag.replace(" ", "_")
+
     instance_data_dir = os.path.join('/tmp', uuid, 'training_data', output_model_name)
     lora_model_path = f'/tmp/{uuid}/{output_model_name}/ensemble'
     if not os.path.exists(lora_model_path):
@@ -192,7 +205,7 @@ def launch_pipeline(uuid,
 
     with ProcessPoolExecutor(max_workers=5) as executor:
         future = executor.submit(gen_portrait, instance_data_dir,
-                                 num_images, base_model, lora_model_path, 'film/film', 'v2.0')
+                                 num_images, base_model, lora_model_path, base_model_sub_dir, revision, height=height, width=width)
         while not future.done():
             is_processing = future.running()
             if not is_processing:
@@ -226,7 +239,8 @@ def launch_pipeline_inpaint(uuid,
                             second_control_weight=0.1,
                             final_fusion_ratio=0.5,
                             use_fusion_before=True,
-                            use_fusion_after=True):
+                            use_fusion_after=True,
+                            face_tag=None):
     before_queue_size = 0
     before_done_count = inference_done_count
 
@@ -240,8 +254,10 @@ def launch_pipeline_inpaint(uuid,
         if len(selected_template_images) == 0:
             raise gr.Error('请选择一张模板(Please select 1 template)')
 
-    base_model = 'ly261666/cv_portrait_model'
-    output_model_name = 'personalization_lora'
+    output_model_name = default_personalizaition_lora_name
+    if face_tag is not None:
+        output_model_name = output_model_name + "_" + face_tag.replace(" ", "_")
+
     instance_data_dir = os.path.join('/tmp', uuid, 'training_data', output_model_name)
 
     # we use ensemble model, if not exists fallback to original lora
@@ -257,7 +273,7 @@ def launch_pipeline_inpaint(uuid,
         future = executor.submit(gen_portrait_inpaint, base_model, lora_model_path, instance_data_dir, \
                                  selected_template_images, cache_model_dir, select_face_num, first_control_weight, \
                                  second_control_weight, final_fusion_ratio, use_fusion_before, use_fusion_after,
-                                 sub_path='film/film', revision='v2.0')
+                                 sub_path=base_model_sub_dir, revision=revision)
         while not future.done():
             is_processing = future.running()
             if not is_processing:
@@ -293,6 +309,7 @@ class Trainer:
             ensemble: bool,
             enhance_lora: bool,
             instance_images: list,
+            face_tag
     ) -> str:
         # Check Cuda
         if not torch.cuda.is_available():
@@ -313,7 +330,10 @@ class Trainer:
             else:
                 uuid = 'qw'
 
-        output_model_name = 'personalization_lora'
+        output_model_name = default_personalizaition_lora_name
+        if face_tag is not None:
+            output_model_name = output_model_name + "_" + face_tag.replace(" ", "_")
+            FACE_TAGS.add(face_tag)
 
         # mv user upload data to target dir
         instance_data_dir = os.path.join('/tmp', uuid, 'training_data', output_model_name)
@@ -331,8 +351,8 @@ class Trainer:
 
         # train lora
         print("instance_data_dir", instance_data_dir)
-        train_lora_fn(foundation_model_path='ly261666/cv_portrait_model',
-                      revision='v2.0',
+        train_lora_fn(foundation_model_path=base_model,
+                      revision=revision,
                       output_img_dir=instance_data_dir,
                       work_dir=work_dir,
                       ensemble=ensemble,
@@ -390,13 +410,15 @@ def train_input():
 
                     gr.Markdown('''
                         - Step 1. 上传计划训练的图片，3~10张头肩照（注意：请避免图片中出现多人脸、脸部遮挡等情况，否则可能导致效果异常）
-                        - Step 2. 点击 [开始训练] ，启动形象定制化训练，约需15分钟，请耐心等待～
-                        - Step 3. 切换至 [形象体验] ，生成你的风格照片
+                        - Step 2. 给人脸打标签（可选）
+                        - Step 3. 点击 [开始训练] ，启动形象定制化训练，约需15分钟，请耐心等待～
+                        - Step 4. 切换至 [形象体验] ，生成你的风格照片
                         ''')
                     gr.Markdown('''
                         - Step 1. Upload 3-10 headshot photos of yours (Note: avoid photos with multiple faces or face obstruction, which may lead to non-ideal result).
-                        - Step 2. Click [Train] to start training for customizing your Digital-Twin, this may take up-to 15 mins.
-                        - Step 3. Switch to [Inference] Tab to generate stylized photos.
+                        - Step 2. Add tag for current face(optional).
+                        - Step 3. Click [Train] to start training for customizing your Digital-Twin, this may take up-to 15 mins.
+                        - Step 4. Switch to [Inference] Tab to generate stylized photos.
                         ''')
 
         with gr.Box():
@@ -409,6 +431,11 @@ def train_input():
                 - LoRA增强（LoRA-Enhancement）：扩大LoRA规模，生成图片更贴近用户，至少5张以上多图训练或者艺术照生成模式建议勾选 - Boost scale of LoRA to enhance output resemblance with input. Recommended for training with more than 5 pics or using with Inpaint mode. 
                 '''
             )
+        with gr.Row():
+            face_tag = gr.Text(label='人脸标签(Face tag)', value='default', interactive=True)
+            gr.Markdown('''可以给当前人脸设置标签
+                           Tag can be set for current face
+                        ''')
 
         run_button = gr.Button('开始训练（等待上传图片加载显示出来再点，否则会报错）'
                                'Start training (please wait until photo(s) fully uploaded, otherwise it may result in training failure)')
@@ -437,6 +464,7 @@ def train_input():
                              ensemble,
                              enhance_lora,
                              instance_images,
+                             face_tag
                          ],
                          outputs=[output_message])
 
@@ -450,6 +478,12 @@ def inference_input():
             with gr.Column():
                 user_models = gr.Radio(label="模型选择(Model list)", choices=HOT_MODELS, type="value",
                                        value=HOT_MODELS[0])
+                with gr.Row():
+                    face_tag = gr.Dropdown(choices=FACE_TAGS, value='default', type="value", label="人脸标签选择(Face tag)",
+                                           interactive=True)
+                    update_button = gr.Button('刷新人脸(Refresh face tag)')
+                    update_button.click(dropdown_face_tag_list, inputs=[], outputs=[face_tag])
+
                 style_model_list = []
                 for style in styles:
                     style_model_list.append(style['name'])
@@ -477,11 +511,25 @@ def inference_input():
                     pose_model = gr.Radio(choices=pmodels, value=pose_models[0]['name'],
                                           type="index", label="姿态控制模型(Pose control model)")
                 with gr.Box():
-                    num_images = gr.Number(
-                        label='生成图片数量(Number of photos)', value=6, precision=1, minimum=1, maximum=6)
-                    gr.Markdown('''
-                    注意：最多支持生成6张图片!(You may generate a maximum of 6 photos at one time!)
-                        ''')
+                    with gr.Row():
+                        with gr.Column():
+                            num_images = gr.Number(
+                                label='生成图片数量', value=6, precision=1)
+                            gr.Markdown('''
+                            注意：最多支持生成6张图片!
+                            ''')
+                        with gr.Column():
+                            height = gr.Number(
+                                label='照片高度', value=512, precision=1)
+                            gr.Markdown('''
+                            默认为512
+                            ''')
+                        with gr.Column():
+                            width = gr.Number(
+                                label='照片宽度', value=512, precision=1)
+                            gr.Markdown('''
+                            默认为512
+                            ''')
 
         display_button = gr.Button('开始生成(Start!)')
 
@@ -497,11 +545,13 @@ def inference_input():
         pose_image.change(update_pose_model, pose_image, [pose_model])
         display_button.click(fn=launch_pipeline,
                              inputs=[uuid, pos_prompt, user_models, num_images, style_model, multiplier_style,
-                                     pose_model, pose_image],
+                                     pose_model, pose_image, face_tag, height, width],
                              outputs=[infer_progress, output_images])
 
     return demo
 
+def dropdown_face_tag_list():
+    return gr.Dropdown.update(choices=FACE_TAGS)
 
 def inference_inpaint():
     """
@@ -521,6 +571,13 @@ def inference_inpaint():
                     type="value",
                     value=HOT_MODELS[0]
                 )
+
+                # 人脸
+                with gr.Row():
+                    face_tag = gr.Dropdown(choices=FACE_TAGS, value='default', type="value", label="人脸标签选择(Face tag)",
+                                           interactive=True)
+                    update_button = gr.Button('刷新人脸(Refresh face tag)')
+                    update_button.click(dropdown_face_tag_list, inputs=[], outputs=[face_tag])
 
                 template_gallery_list = [(i, f"模板{idx + 1}") for idx, i in enumerate(preset_template)]
                 gallery = gr.Gallery(template_gallery_list).style(grid=4, height=300)
@@ -583,7 +640,7 @@ def inference_inpaint():
             fn=launch_pipeline_inpaint,
             inputs=[uuid, selected_template_images, append_pos_prompt, select_face_num, first_control_weight,
                     second_control_weight,
-                    final_fusion_ratio, use_fusion_before, use_fusion_after],
+                    final_fusion_ratio, use_fusion_before, use_fusion_after, face_tag],
             outputs=[infer_progress, output_images]
         )
 
@@ -601,4 +658,4 @@ with gr.Blocks(css='style.css') as demo:
 
 if __name__ == "__main__":
     multiprocessing.set_start_method('spawn')
-    demo.queue(status_update_rate=1).launch(share=True)
+    demo.queue(status_update_rate=1).launch(server_name='0.0.0.0', server_port=server_port, share=True, enable_queue=True)

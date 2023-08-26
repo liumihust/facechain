@@ -6,6 +6,10 @@ import cv2
 from modelscope import snapshot_download
 from facechain.constants import neg_prompt, pos_prompt_with_cloth, pos_prompt_with_style, styles, cloth_prompt
 
+from env import base_model
+from env import revision
+from env import base_model_sub_dir
+
 
 def generate_pos_prompt(style_model, prompt_cloth):
     if style_model == styles[0]['name'] or style_model is None:
@@ -25,10 +29,7 @@ use_post_process = True
 use_stylization = False
 processed_dir = './processed'
 num_generate = 5
-base_model = 'ly261666/cv_portrait_model'
-revision = 'v2.0'
 multiplier_style = 0.25
-base_model_sub_dir = 'film/film'
 train_output_dir = './output'
 output_dir = './generated'
 use_style = False

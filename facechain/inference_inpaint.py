@@ -28,6 +28,8 @@ from facechain.constants import inpaint_default_positive, inpaint_default_negati
 from facechain.merge_lora import merge_lora
 from facechain.data_process.face_process_utils import call_face_crop, crop_and_paste
 
+from env import model_path
+
 
 def build_pipeline_facechain(baseline_model_path, lora_model_path, cache_model_dir, from_safetensor=False):
     """
@@ -114,7 +116,7 @@ class GenPortraitInpaint:
         Returns:
             final_res (list): List of generated images.
         """
-        base_model_path = snapshot_download(base_model_path, revision=revision)
+        base_model_path = model_path + base_model_path
         if sub_path is not None and len(sub_path) > 0:
             base_model_path = os.path.join(base_model_path, sub_path)
         print(f'lora_model_path            :', lora_model_path)
